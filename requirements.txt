@@ -1,0 +1,9 @@
+requests>=2.28.0
+argparse
+pathlib
+dataclasses
+typing
+json
+re
+os
+sys
