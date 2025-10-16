@@ -42,7 +42,15 @@ python ai_cli_tool.py --setup
 python ai_cli_tool.py --chat
 ```
 
-## 📚 Documentation
-- **Installation**: INSTALLATION.md
-- **Contributing**: CONTRIBUTING.md
-- **Changelog**: CHANGELOG.md
+## 📋 Supported AI Providers (Updated October 2025)
+
+| Provider | API Key Format | Latest Models Supported |
+|----------|----------------|------------------------|
+| **OpenAI** | `sk-...` | GPT-5, GPT-5 Mini, GPT-5 Nano, GPT-4.1, O3, O3-Mini |
+| **Anthropic** | `sk-ant-...` | Claude Sonnet 4.5, Claude Haiku 4.5, Claude Opus 4.1, Claude Sonnet 4 |
+| **Google** | `AIza...` | Gemini 2.5 Pro, Gemini 2.5 Flash, Gemini 2.5 Flash-Lite, Gemini 2.0 Flash |
+| **Perplexity** | `pplx-...` | Sonar Deep Research, Sonar Reasoning Pro, Sonar Pro, R1-1776 |
+| **Grok/X.AI** | `xai-...` | Grok-4, Grok-3, Grok-3 Mini, Grok-2 Image |
+| **Cohere** | `[40+ chars]` | Command A 03-2025, Command R7B, Command A Translate, Command A Vision |
+
+> ⚠️ **Model Updates**: All deprecated models (Gemini 1.5 Pro/Flash, Llama-3.1-sonar models) have been replaced with the latest 2025 models. The tool automatically uses the most current available models for each provider.
