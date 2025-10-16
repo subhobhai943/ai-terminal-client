@@ -3,6 +3,7 @@
 Multi-AI Terminal Client Tool
 A universal CLI for interacting with multiple AI providers
 Supports OpenAI, Anthropic, Google Gemini, Perplexity, Grok, and more
+Enhanced with file creation, modification, and project generation capabilities
 """
 
 import os
@@ -14,6 +15,9 @@ import requests
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+import zipfile
+import tempfile
+from datetime import datetime
 
 # Color codes for terminal output
 class Colors:
@@ -35,7 +39,131 @@ class AIProvider:
     headers_template: Dict[str, str]
     request_template: Dict
     models: List[str]
+
+class FileManager:
+    """Handle file and folder operations"""
     
+    @staticmethod
+    def extract_code_blocks(response: str) -> List[Dict[str, str]]:
+        """Extract code blocks from AI response"""
+        # Pattern to match code blocks with filename and language
+        pattern = r'```(?:(\w+)\s+)?(?:<!--\s*([^\s]+)\s*-->\s*)?\n?([\s\S]*?)```'
+        
+        # Also look for filename patterns
+        filename_patterns = [
+            r'(?:File|Filename|Save as|Create|Path):\s*([^\n]+)',
+            r'([^\s]+\.(?:html|css|js|py|txt|md|json|xml|yml|yaml|toml|ini|cfg))\s*:',
+            r'<!--\s*([^\s]+)\s*-->',
+            r'//\s*([^\s]+\.(?:js|ts|jsx|tsx|css|html))\s*$',
+            r'#\s*([^\s]+\.(?:py|sh|md))\s*$'
+        ]
+        
+        code_blocks = []
+        matches = re.finditer(pattern, response, re.MULTILINE)
+        
+        for match in matches:
+            language = match.group(1) or ''
+            filename = match.group(2) or ''
+            content = match.group(3).strip()
+            
+            # If no filename in match, try to find it in the content or nearby text
+            if not filename:
+                # Look for filename patterns before the code block
+                start_pos = max(0, match.start() - 200)
+                context = response[start_pos:match.start()]
+                
+                for pattern in filename_patterns:
+                    filename_match = re.search(pattern, context, re.IGNORECASE)
+                    if filename_match:
+                        filename = filename_match.group(1).strip()
+                        break
+                
+                # If still no filename, try to infer from language
+                if not filename and language:
+                    extensions = {
+                        'html': '.html',
+                        'css': '.css',
+                        'javascript': '.js',
+                        'js': '.js',
+                        'python': '.py',
+                        'py': '.py',
+                        'json': '.json',
+                        'yaml': '.yml',
+                        'yml': '.yml',
+                        'xml': '.xml',
+                        'md': '.md',
+                        'markdown': '.md'
+                    }
+                    ext = extensions.get(language.lower())
+                    if ext:
+                        filename = f"file{ext}"
+            
+            if content:  # Only add if there's actual content
+                code_blocks.append({
+                    'filename': filename or f"file_{len(code_blocks) + 1}.txt",
+                    'language': language,
+                    'content': content
+                })
+        
+        return code_blocks
+    
+    @staticmethod
+    def create_project_structure(code_blocks: List[Dict[str, str]], project_name: str = None) -> str:
+        """Create files and folders from code blocks"""
+        if not code_blocks:
+            return "No code blocks found in the response."
+        
+        # Determine project name
+        if not project_name:
+            project_name = f"ai_project_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Clean project name
+        project_name = re.sub(r'[^\w\-_]', '_', project_name)
+        
+        # Create project directory
+        project_path = Path(project_name)
+        if project_path.exists():
+            # If exists, create with timestamp
+            project_name = f"{project_name}_{datetime.now().strftime('%H%M%S')}"
+            project_path = Path(project_name)
+        
+        project_path.mkdir(exist_ok=True)
+        
+        created_files = []
+        
+        for block in code_blocks:
+            filename = block['filename']
+            content = block['content']
+            
+            # Handle nested paths
+            file_path = project_path / filename
+            
+            # Create parent directories if needed
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write file
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                created_files.append(str(file_path))
+            except Exception as e:
+                print(f"{Colors.RED}Error creating {filename}: {e}{Colors.END}")
+        
+        return project_path, created_files
+    
+    @staticmethod
+    def create_zip_archive(project_path: Path) -> str:
+        """Create a zip archive of the project"""
+        zip_path = f"{project_path}.zip"
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file_path in project_path.rglob('*'):
+                if file_path.is_file():
+                    arcname = file_path.relative_to(project_path)
+                    zipf.write(file_path, arcname)
+        
+        return zip_path
+
 class APIKeyDetector:
     """Detect AI service from API key patterns"""
     
@@ -114,24 +242,62 @@ class AIClient:
         self.api_url = APIKeyDetector.get_api_url(self.provider)
         self.models = APIKeyDetector.get_models(self.provider)
         
-    def send_message(self, message: str, model: str = None) -> str:
-        """Send message to AI provider"""
+    def send_message(self, message: str, model: str = None, create_files: bool = False) -> str:
+        """Send message to AI provider with optional file creation"""
         if not model and self.models:
             model = self.models[0]  # Use first available model as default
         
+        # Enhance prompt for file creation if requested
+        if create_files:
+            enhanced_message = f"""
+{message}
+
+Please provide complete, working code. For each file, use this format:
+```language
+<!-- filename.ext -->
+[complete code here]
+```
+
+Make sure to:
+1. Include ALL necessary files (HTML, CSS, JS, etc.)
+2. Use proper file extensions
+3. Provide complete, functional code
+4. Include comments where helpful
+5. Ensure files work together as a complete project
+
+Example format:
+```html
+<!-- index.html -->
+<!DOCTYPE html>
+<html>...
+```
+
+```css
+<!-- style.css -->
+body {{ ... }}
+```
+
+```javascript
+<!-- script.js -->
+function example() {{ ... }}
+```
+"""
+        else:
+            enhanced_message = message
+        
         try:
             if self.provider == 'OpenAI':
-                return self._openai_request(message, model)
+                return self._openai_request(enhanced_message, model)
             elif self.provider == 'Anthropic':
-                return self._anthropic_request(message, model)
+                return self._anthropic_request(enhanced_message, model)
             elif self.provider == 'Google':
-                return self._google_request(message, model)
+                return self._google_request(enhanced_message, model)
             elif self.provider == 'Perplexity':
-                return self._perplexity_request(message, model)
+                return self._perplexity_request(enhanced_message, model)
             elif self.provider == 'Grok':
-                return self._grok_request(message, model)
+                return self._grok_request(enhanced_message, model)
             elif self.provider == 'Cohere':
-                return self._cohere_request(message, model)
+                return self._cohere_request(enhanced_message, model)
             else:
                 return f"Error: Unsupported provider '{self.provider}'"
         except Exception as e:
@@ -146,7 +312,7 @@ class AIClient:
         data = {
             'model': model,
             'messages': [{'role': 'user', 'content': message}],
-            'max_tokens': 1000
+            'max_tokens': 4000
         }
         
         response = requests.post(self.api_url, headers=headers, json=data)
@@ -163,7 +329,7 @@ class AIClient:
         
         data = {
             'model': model,
-            'max_tokens': 1000,
+            'max_tokens': 4000,
             'messages': [{'role': 'user', 'content': message}]
         }
         
@@ -173,7 +339,6 @@ class AIClient:
         return response.json()['content'][0]['text']
     
     def _google_request(self, message: str, model: str) -> str:
-        # Gemini API implementation
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
         
         headers = {
@@ -187,7 +352,10 @@ class AIClient:
                         {'text': message}
                     ]
                 }
-            ]
+            ],
+            'generationConfig': {
+                'maxOutputTokens': 4000
+            }
         }
         
         response = requests.post(url, headers=headers, json=data)
@@ -287,10 +455,10 @@ class AITerminal:
     def print_banner(self):
         banner = f"""
 {Colors.CYAN}╔══════════════════════════════════════════════════════════════════╗
-║                        🤖 AI Terminal Client 🤖                   ║
-║              Universal CLI for Multiple AI Providers              ║
-║        Supports: OpenAI • Anthropic • Google • Perplexity       ║
-║                    Grok • Cohere • And More!                    ║
+║                     🤖 AI Terminal Client v1.2 🤖                ║
+║              Universal CLI for Multiple AI Providers             ║
+║        Supports: OpenAI • Anthropic • Google • Perplexity      ║
+║                   Grok • Cohere • File Generation!             ║
 ╚══════════════════════════════════════════════════════════════════╝{Colors.END}
 """
         print(banner)
@@ -382,7 +550,8 @@ class AITerminal:
         print(f"\n{Colors.GREEN}🚀 Starting chat session with {Colors.BOLD}{provider}{Colors.END}")
         if model:
             print(f"{Colors.GREEN}📱 Model: {Colors.BOLD}{model}{Colors.END}")
-        print(f"{Colors.YELLOW}Type 'exit' or 'quit' to end the session{Colors.END}\n")
+        print(f"{Colors.YELLOW}Type 'exit' or 'quit' to end the session{Colors.END}")
+        print(f"{Colors.YELLOW}💡 Tip: Ask to 'create files' or 'generate project' to enable file creation mode{Colors.END}\n")
         
         while True:
             try:
@@ -395,9 +564,42 @@ class AITerminal:
                 if not user_input:
                     continue
                 
+                # Check if user wants file creation
+                create_files = any(keyword in user_input.lower() for keyword in [
+                    'create file', 'generate file', 'make file', 'create project',
+                    'generate project', 'build app', 'create app', 'make app',
+                    'web app', 'website', 'html', 'css', 'javascript'
+                ])
+                
                 print(f"{Colors.PURPLE}AI ({provider}): {Colors.END}", end="", flush=True)
-                response = client.send_message(user_input, model)
+                response = client.send_message(user_input, model, create_files=create_files)
                 print(response)
+                
+                # Process file creation if requested
+                if create_files:
+                    code_blocks = FileManager.extract_code_blocks(response)
+                    if code_blocks:
+                        print(f"\n{Colors.CYAN}📁 Found {len(code_blocks)} code blocks. Creating files...{Colors.END}")
+                        
+                        # Ask for project name
+                        project_name = input(f"{Colors.GREEN}Project name (or press Enter for auto-generated): {Colors.END}").strip()
+                        if not project_name:
+                            project_name = None
+                        
+                        project_path, created_files = FileManager.create_project_structure(code_blocks, project_name)
+                        
+                        print(f"{Colors.GREEN}✅ Created project: {Colors.BOLD}{project_path}{Colors.END}")
+                        for file_path in created_files:
+                            print(f"  📄 {file_path}")
+                        
+                        # Ask if user wants to create zip
+                        create_zip = input(f"{Colors.YELLOW}Create ZIP archive? (y/N): {Colors.END}").strip().lower()
+                        if create_zip == 'y':
+                            zip_path = FileManager.create_zip_archive(project_path)
+                            print(f"{Colors.GREEN}📦 ZIP archive created: {Colors.BOLD}{zip_path}{Colors.END}")
+                    else:
+                        print(f"{Colors.YELLOW}⚠️  No code blocks found in response{Colors.END}")
+                
                 print()
                 
             except KeyboardInterrupt:
@@ -406,17 +608,64 @@ class AITerminal:
             except Exception as e:
                 print(f"{Colors.RED}Error: {str(e)}{Colors.END}")
     
+    def generate_project(self, prompt: str, provider: str = None, model: str = None, project_name: str = None):
+        """Generate a project from a single prompt"""
+        if not provider:
+            provider, model = self.select_provider_and_model()
+            if not provider:
+                return
+        
+        api_key = self.config.get_api_key(provider)
+        if not api_key:
+            print(f"{Colors.RED}No API key found for {provider}{Colors.END}")
+            return
+        
+        client = AIClient(api_key, provider)
+        
+        print(f"{Colors.GREEN}🚀 Generating project with {Colors.BOLD}{provider}{Colors.END}")
+        if model:
+            print(f"{Colors.GREEN}📱 Model: {Colors.BOLD}{model}{Colors.END}")
+        print(f"{Colors.YELLOW}📝 Prompt: {prompt}{Colors.END}\n")
+        
+        print(f"{Colors.PURPLE}Generating... {Colors.END}", end="", flush=True)
+        response = client.send_message(prompt, model, create_files=True)
+        print("Done!\n")
+        
+        print(f"{Colors.CYAN}📋 AI Response:{Colors.END}")
+        print(response)
+        
+        # Extract and create files
+        code_blocks = FileManager.extract_code_blocks(response)
+        if code_blocks:
+            print(f"\n{Colors.CYAN}📁 Found {len(code_blocks)} code blocks. Creating files...{Colors.END}")
+            
+            project_path, created_files = FileManager.create_project_structure(code_blocks, project_name)
+            
+            print(f"{Colors.GREEN}✅ Project created: {Colors.BOLD}{project_path}{Colors.END}")
+            for file_path in created_files:
+                print(f"  📄 {file_path}")
+            
+            # Create ZIP automatically for generated projects
+            zip_path = FileManager.create_zip_archive(project_path)
+            print(f"{Colors.GREEN}📦 ZIP archive created: {Colors.BOLD}{zip_path}{Colors.END}")
+            
+            print(f"\n{Colors.YELLOW}💡 You can now open the project in VS Code, Replit, or any IDE!{Colors.END}")
+        else:
+            print(f"{Colors.YELLOW}⚠️  No code blocks found in response{Colors.END}")
+    
     def run(self):
         """Main application entry point"""
         self.print_banner()
         
-        parser = argparse.ArgumentParser(description='Universal AI Terminal Client')
+        parser = argparse.ArgumentParser(description='Universal AI Terminal Client with File Generation')
         parser.add_argument('--setup', action='store_true', help='Run setup wizard')
         parser.add_argument('--list', action='store_true', help='List configured providers')
         parser.add_argument('--chat', action='store_true', help='Start chat session')
         parser.add_argument('--prompt', type=str, help='Send a single prompt')
+        parser.add_argument('--generate', type=str, help='Generate project from prompt')
         parser.add_argument('--provider', type=str, help='Specify provider')
         parser.add_argument('--model', type=str, help='Specify model')
+        parser.add_argument('--project-name', type=str, help='Project name for generated files')
         
         args = parser.parse_args()
         
@@ -431,6 +680,8 @@ class AITerminal:
                     print(f"  • {Colors.BOLD}{provider}{Colors.END} - Models: {', '.join(models[:3])}...")
             else:
                 print(f"{Colors.YELLOW}No providers configured. Run --setup first.{Colors.END}")
+        elif args.generate:
+            self.generate_project(args.generate, args.provider, args.model, args.project_name)
         elif args.prompt:
             if args.provider and args.provider in self.config.list_providers():
                 provider = args.provider

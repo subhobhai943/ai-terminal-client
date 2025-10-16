@@ -13,6 +13,9 @@ A powerful, universal command-line interface (CLI) for interacting with multiple
 - **🔧 Easy Configuration**: Simple setup wizard for managing API keys
 - **🎨 Beautiful Terminal UI**: Colorized output and intuitive interface
 - **📱 Model Selection**: Choose from available models for each provider
+- **📁 File Generation**: Create files, folders, and complete projects from AI responses
+- **🗂️ Project Structure**: Automatic project organization and ZIP archive creation
+- **💻 IDE Ready**: Generated projects work perfectly in VS Code, Replit, and other IDEs
 
 ## 🚀 Quick Start
 
@@ -40,6 +43,15 @@ python ai_cli_tool.py --setup
 
 ```bash
 python ai_cli_tool.py --chat
+```
+
+### Generate Projects
+```bash
+# Generate a complete web app
+python ai_cli_tool.py --generate "Create a simple calculator web app with HTML, CSS, and JavaScript"
+
+# Specify provider and model
+python ai_cli_tool.py --generate "Build a React todo app" --provider OpenAI --model gpt-5 --project-name "my-todo-app"
 ```
 
 ## 📋 Supported AI Providers (Updated October 2025)
